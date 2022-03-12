@@ -16,3 +16,16 @@ def test_get_total_flux():
     ])
     a = get_total_flux(flux)
     assert np.all(a == total_flux)
+
+def test_get_total_flux_cyclical():
+    flux = np.array([
+        [(0.2, 0.35), (0.3, 0.45)],
+        [(0.4, -0.35), (-0.6, 0.1)]
+    ])
+
+    total_flux = np.array([
+        [0, 1],
+        [2, 1]
+    ])
+    a = get_total_flux(flux)
+    assert np.all(a == total_flux)
