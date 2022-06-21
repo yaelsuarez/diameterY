@@ -66,6 +66,14 @@ class Fiber:
         field[mask_n] = -u_normal
         field[mask_c] = 0
         return field
+    
+    def to_dict(self):
+        return dict(
+            p1=self.p1.tolist(),
+            p2=self.p2.tolist(),
+            diameter=self.diameter,
+            brightness=self.brightness,
+        )
 
     @classmethod
     def create(cls, img_size=img_size):
@@ -115,6 +123,11 @@ class Image:
 
         return f
 
+    def to_dict(self):
+        return dict(
+            fiber = self.fiber.to_dict(),
+            bg_color = self.bg_color
+        )
 
     @classmethod
     def create(cls, img_size=img_size):
