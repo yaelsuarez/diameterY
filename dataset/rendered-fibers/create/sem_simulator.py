@@ -14,12 +14,8 @@ wandb.login()
 def gen_table(d):
     """create a table version of the task"""
     for k,v in d.items():
-        yield {
-            'name':f'f{int(k):02d}',
-            'd':v['d'],
-            'p1':v['p1'],
-            'p2':v['p2']
-        }
+        v.update({"index":k})
+        yield v
 
 
 def create_rendered_dataset(sizes:Tuple[int, int, int], **kwargs):
@@ -28,7 +24,7 @@ def create_rendered_dataset(sizes:Tuple[int, int, int], **kwargs):
     Args:
         sizes: Sizes of the train val test splits
     """
-    with wandb.init(project='diameterY', job_type='create-data') as run:
+    with wandb.init(project='diameterY', job_type='create-data', mode='online') as run:
         raw_data = wandb.Artifact(
             'rendered-fibers-mini', type='dataset',
             description='Single straight fibers split into train/val/test',
@@ -45,20 +41,23 @@ def create_rendered_dataset(sizes:Tuple[int, int, int], **kwargs):
                 # --- load the image to log it to WandB
                 im = Image.open(f'output/{task_uid}.png')
                 seg = np.load(f'output/{task_uid}_seg.npz')['y']
-                with open(f'output/{task_uid}.json') as file:
-                    task_data = json.load(file)
-                table = wandb.Table(data=pd.DataFrame(gen_table(task_data)))
-                wandb_im = wandb.Image(im, caption=task_uid, masks={
-                    'ground_truth':{
-                        'mask_data':np.squeeze(seg),
-                        'class_labels':{int(x):f'f{int(x):02d}' for x in task_data.keys()}    
-                    }
-                })
-                raw_data.add(wandb_im, name=task_uid)
-                raw_data.add(table, name=f'{task_uid}_params')
+                # with open(f'output/{task_uid}.json') as file:
+                #     task_data = json.load(file)
+                # table = wandb.Table(data=pd.DataFrame(gen_table(task_data)))
+                # wandb_im = wandb.Image(im, caption=task_uid, masks={
+                #     'ground_truth':{
+                #         'mask_data':np.squeeze(seg),
+                #         'class_labels':{int(x):f'f{int(x-100):02d}' for x in task_data.keys()}    
+                #     }
+                # })
+                # raw_data.add(wandb_im, name=task_uid)
+                # raw_data.add(table, name=f'{task_uid}_params')
+                raw_data.add_file(f'output/{task_uid}.png', name=task_uid)
+                raw_data.add_file(f'output/{task_uid}_seg.npz', name=f'{task_uid}_seg')
+                raw_data.add_file(f'output/{task_uid}.json', name=f'{task_uid}_params')
         run.log_artifact(raw_data)
 if __name__ == "__main__":
-    create_rendered_dataset([8,1,1])
+    create_rendered_dataset([3,3,3])
 
 # for i in tqdm(range(10)):
     

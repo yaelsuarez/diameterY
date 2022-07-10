@@ -1,5 +1,7 @@
-"""This module is intended to run with the following command:
-docker run --rm -i -u $(id -u):$(id -g) --volume "$(pwd):/kubric" kubruntu_sdf /usr/bin/python3 'create/sem_worker.py' <task_id>
+r"""This module is intended to run with the following command:
+
+docker run --rm -i -u $(id -u):$(id -g) --volume "$(pwd):/kubric" \
+kubruntu_sdf /usr/bin/python3 'create/sem_worker.py' <task_id>
 
 It creates a single scene and stores 3 files. An rgba, a segmentation with 
 the first 10 fibers and a json with the information about those 10 fibers.
@@ -28,17 +30,17 @@ temp_folder = os.path.join("temp", scene_uid)
 os.makedirs(temp_folder, exist_ok=True)
 
 
-def create_fiber(p1, p2, diameter=0.1):
-    uid = str(uuid1())
-    filepath = os.path.join(temp_folder, f"{uid}.obj")
+def create_fiber(asset_id, p1, p2, diameter=0.1):
+    filepath = os.path.join(temp_folder, f"{asset_id}.obj")
     f = capped_cylinder(p1, p2, diameter / 2)
     # f = f.bend_linear(-Y, 1.5*Y, X/2, ease.in_out_quad)
     f.save(filepath, sparse=False, samples=2**18, verbose=False)
     obj = kb.FileBasedObject(
-        asset_id=uid,
+        asset_id=str(asset_id),
         render_filename=filepath,
         bounds=((-1, -1, -1), (1, 1, 1)),
         simulation_filename=None,
+        segmentation_id=asset_id,
     )
     return obj
 
@@ -73,11 +75,11 @@ def random_line_in_perimeter(p1, p2):
     return rectangle_perimeter(p1, p2, t1), rectangle_perimeter(p1, p2, t2)
 
 
-def random_fiber(z, d):
+def random_fiber(asset_id, z, d):
     p1, p2 = random_line_in_perimeter([-0.6, -0.6], [0.6, 0.6])
     p1 = [*p1, z]
     p2 = [*p2, z]
-    return create_fiber(p1, p2, d), p1, p2
+    return create_fiber(asset_id, p1, p2, d), p1, p2
 
 # bg_color
 c = np.random.rand()
@@ -97,12 +99,23 @@ fg_material = PrincipledBSDFMaterial(
   roughness=np.random.rand()
 )
 
-# --- populate the scene with objects, lights, cameras
-scene += kb.Cube(name="floor", scale=(10, 10, 0.1), position=(0, 0, -1), material=bg_material, background=True)
+# --- populate the scene with bg, lights, and cameras
+# bg is id 0
+# floor is id 1
+scene += kb.Cube(name="floor", scale=(10, 10, 0.1), position=(0, 0, -1), material=bg_material, background=True, segmentation_id=0)
+scene += kb.DirectionalLight(
+    name="sun", 
+    position=np.random.rand(3)*3, 
+    look_at=(0, 0, 0),
+    intensity=np.random.uniform(1.0,2.0),
+)
+scene.camera = kb.OrthographicCamera(position=(0, 0, 3), orthographic_scale=1)
+
+# --- create random diameters for fibers
 mu = np.random.uniform(0.03, 0.15)
 d = np.random.normal(mu, 0.01, 50)
 
-
+# --- create random material for fibers
 fg_material = PrincipledBSDFMaterial(
       color=color_fg,
       metallic = np.random.rand(),
@@ -111,39 +124,45 @@ fg_material = PrincipledBSDFMaterial(
       roughness = np.random.rand()
     )
 
+# --- initial z position
 last_z = 0.1
 
-task_data = {}
-for i in range(10):
-    last_z = last_z - d[i]*0.5
-    obj, p1, p2 = random_fiber(last_z, d[i])
-    obj.material = fg_material
-    scene += obj
-    task_data[i] = {'d':d[i], 'p1':p1, 'p2': p2}
-scene += kb.DirectionalLight(
-    name="sun", position=np.random.rand(3)*3, look_at=(0, 0, 0), intensity=np.random.uniform(0.5,1.5)
-)
-scene.camera = kb.OrthographicCamera(position=(0, 0, 3), orthographic_scale=1)
-frame = renderer.render_still(return_layers=['segmentation'])
-kb.write_palette_png(frame["segmentation"], f"output/{scene_uid}_seg10.png")
+# --- debug
+for asset in scene.foreground_assets:
+    print(asset.segmentation_id)
 
-for i in range(10, 40):
-    last_z = last_z - d[i]*0.5
-    if last_z < -1.0:
+# --- add the first 10 fibers
+task_data = {0:{'name':'bg'}}
+for i in range(50):
+    
+    last_z -= d[i]*0.5
+    if last_z <= -0.9:
       break
-    obj, p1, p2 = random_fiber(last_z, d[i])
+
+    asset_id = i+100
+    obj, p1, p2 = random_fiber(asset_id, last_z, d[i])
     obj.material = fg_material
     scene += obj
-    task_data[i] = {'d':d[i], 'p1':p1, 'p2': p2}
-
-with open(f'output/{scene_uid}.json', 'w') as file:
-    json.dump(task_data, file)
-# renderer.save_state("output/helloworld.blend")
+    task_data[asset_id] = {'name':f'fiber{i:02d}','d':d[i], 'p1':p1, 'p2': p2} # the id of the background is 0, so fibers only go from 1 onwards
 
 frame = renderer.render_still(return_layers=['rgba', 'segmentation'])
-# --- save the output as pngs
+frame['segmentation'] = kb.adjust_segmentation_idxs(
+    frame["segmentation"],
+    scene.assets,
+    scene.assets).astype(np.uint8)
+
+# --- debug
+last_fiber = max(task_data.keys())
+max_seg_id = np.max(frame['segmentation'])
+assert last_fiber == max_seg_id, f'last_fiber {last_fiber}, max_seg_id {max_seg_id}' 
+# /--- debug
+
 kb.write_png(frame["rgba"], f"output/{scene_uid}.png")
 kb.write_palette_png(frame["segmentation"], f"output/{scene_uid}_seg.png")
 np.savez(f'output/{scene_uid}_seg.npz',y=frame['segmentation'])
+with open(f'output/{scene_uid}.json', 'w') as file:
+    json.dump(task_data, file)
+
+# --- save the output as pngs
 
 shutil.rmtree(temp_folder)
