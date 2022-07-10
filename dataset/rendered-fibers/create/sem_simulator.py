@@ -36,8 +36,14 @@ def create_rendered_dataset(sizes:Tuple[int, int, int], **kwargs):
         for set_name, set_size in zip(['train', 'val', 'test'], sizes):
             for i in tqdm(range(set_size), desc=set_name):
                 task_uid = f'{set_name}{i:04d}'
-                cmd = f'docker run --rm -i -u $(id -u):$(id -g) --volume "$(pwd):/kubric" kubruntu_sdf /usr/bin/python3 "create/sem_worker.py" {task_uid}'
-                subprocess.run(cmd, shell=True, check=True)
+                succeed = 0
+                while succeed == 0:
+                    try:
+                        cmd = f'docker run --rm -i -u $(id -u):$(id -g) --volume "$(pwd):/kubric" kubruntu_sdf /usr/bin/python3 "create/sem_worker.py" {task_uid}'
+                        subprocess.run(cmd, shell=True, check=True)
+                        succeed=1
+                    except Exception as e:
+                        print(e)
                 # --- load the image to log it to WandB
                 im = Image.open(f'output/{task_uid}.png')
                 seg = np.load(f'output/{task_uid}_seg.npz')['y']

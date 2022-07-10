@@ -133,10 +133,10 @@ for asset in scene.foreground_assets:
 
 # --- add the first 10 fibers
 task_data = {0:{'name':'bg'}}
-for i in range(50):
+for i in range(40):
     
     last_z -= d[i]*0.5
-    if last_z <= -0.9:
+    if last_z <= -0.8:
       break
 
     asset_id = i+100
