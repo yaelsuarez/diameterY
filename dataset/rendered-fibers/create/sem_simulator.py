@@ -57,7 +57,7 @@ def create_rendered_dataset(sizes:Tuple[int, int, int], **kwargs):
                 raw_data.add_file(f'output/{task_uid}.json', name=f'{task_uid}_params')
         run.log_artifact(raw_data)
 if __name__ == "__main__":
-    create_rendered_dataset([3,3,3])
+    create_rendered_dataset([256,64,64])
 
 # for i in tqdm(range(10)):
     
