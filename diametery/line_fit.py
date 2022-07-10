@@ -1,5 +1,13 @@
+from matplotlib import lines
 import numpy as np
 from scipy.optimize import curve_fit
+import matplotlib as plt
+from typing import Tuple, List
+import cv2
+
+point = Tuple[float,float]
+line = Tuple[point, point]
+measurements = List[line]
 
 class LineFit:
     def __init__(self, n: int, step_size:float) -> None:
@@ -89,43 +97,59 @@ class LineFit:
     def get_pixels_half (self, pos_or_neg, im, dx, dy, p3):
         color_threshold = (int(np.max(im))+int(np.min(im)))/2
         for ts in (range(len(im[0]))):
-            u_pos = self.get_normal_vector((pos_or_neg*(ts+(self.step_size))), dx, dy, p3) 
-            test_point = round(u_pos[1]),round(u_pos[0])
+            u = self.get_normal_vector((pos_or_neg*(ts+(self.step_size))), dx, dy, p3) 
+            test_point = round(u[1]),round(u[0])
             if not self.is_inside(im, test_point):
-                return None
+                return None, None
             test = im[test_point[0], test_point[1]] > color_threshold
             if test == False:
                 pixels = ts - 1
                 break
-        # plt.plot(u_pos[0], u_pos[1], 'c.', markersize=12)
-        return pixels
-        
+        # plt.plot(u[0], u[1], 'c.', markersize=12)
+        return pixels, (u[0], u[1])
+
+
     def get_calculated_diameter(self, im, p1, p2):
         diameters = []
-        for n in range(1, self.n): 
-            t = 1/self.n 
+        lines = []
+        for n in range(1, self.n+1): 
+            t = 1/(self.n+1) 
             p3, dx, dy = self.get_point((t * n), p1, p2)
-            radius_p = self.get_pixels_half(1, im, dx, dy, p3)
-            radius_n = self.get_pixels_half(-1, im, dx, dy, p3)
+            radius_p, cp1 = self.get_pixels_half(1, im, dx, dy, p3)
+            radius_n, cp2 = self.get_pixels_half(-1, im, dx, dy, p3)
             if (radius_p != None) and (radius_n != None):
                 diameters.append(radius_p+radius_n)
             # plt.plot(p3[0], p3[1], 'r.', markersize=12)
+            lines.append((cp1,cp2))
         calculated_diameter = np.array(diameters).mean()
-        return calculated_diameter
+        return calculated_diameter, lines
+
+    def line_to_arrays(self, line):
+        return [line[0][0], line[1][0]], [line[0][1], line[1][1]]
+
+    def mask_measured_lines(self, im, lines):
+        mask = np.zeros_like(im)
+        for p1, p2 in lines:
+            if not (p1 == None or p2 == None):
+                cv2.line(mask, np.array(p1).astype(np.int32), np.array(p2).astype(np.int32), 1, 1)
+        return mask
 
     def predict(self, im: np.ndarray):
         x, y, popt, pcov = self.get_fited_line_x_y(im)
         _, _, popt_inv, pcov_inv = self.get_fited_line_y_x(im)
         popt_fit, x_fit, y_fit, p1, p2 = self.get_better_fit(x, y, popt, popt_inv, pcov, pcov_inv)
-        calculated_diameter = self.get_calculated_diameter(im, p1, p2)
-        return calculated_diameter
-
+        calculated_diameter, lines = self.get_calculated_diameter(im, p1, p2)
+        mask_meas_lines = self.mask_measured_lines(im, lines)
+        #for line in lines:
+        #    plt.plot(*self.line_to_arrays(line), 'c-')
+        return calculated_diameter, mask_meas_lines
+ 
 if __name__ == "__main__":
     import os 
 
     model = LineFit(10, 0.5)
     dataset_path = "/Users/carmenlopez/dev/diameterY/scratch/dataset_files"
-    example_path = os.path.join(dataset_path, "test_0014.npz")
+    example_path = os.path.join(dataset_path, "test_0005.npz")
     example = np.load(example_path)
-    diameter_pred = model.predict(example["x"])
+    diameter_pred, mask_meas_lines = model.predict(example["x"])
     print(diameter_pred, example["d"])
