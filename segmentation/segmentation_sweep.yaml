@@ -1,0 +1,36 @@
+program: segmentation.py
+method: bayes
+metric:
+  name: val_binary_io_u
+  goal: maximize
+parameters:
+  seed: 
+    value: 0
+  epochs: 
+    value: 1000
+  batch_size: 
+    value: 8
+  loss:
+    distribution: categorical
+    values:
+      - binary_crossentropy
+  dropout:
+    distribution: uniform
+    min: 0.10
+    max: 0.7
+  learning_rate:
+    distribution: log_uniform_values
+    min: 0.00001
+    max: 0.001
+  l0_kernel_size:
+    distribution: int_uniform
+    min: 3
+    max: 7
+  initial_features:
+    distribution: categorical
+    values: [2,4,8,16]
+early_terminate:
+  type: hyperband
+  s: 2
+  eta: 3
+  max_iter: 27
