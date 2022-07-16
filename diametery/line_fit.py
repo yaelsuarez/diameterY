@@ -110,17 +110,31 @@ class LineFit:
 
 
     def get_calculated_diameter(self, im, p1, p2):
+        color_threshold = (int(np.max(im))+int(np.min(im)))/2
         diameters = []
         lines = []
+        #mask_meas_lines = np.zeros_like(im)
         for n in range(1, self.n+1): 
             t = 1/(self.n+1) 
             p3, dx, dy = self.get_point((t * n), p1, p2)
-            radius_p, cp1 = self.get_pixels_half(1, im, dx, dy, p3)
-            radius_n, cp2 = self.get_pixels_half(-1, im, dx, dy, p3)
-            if (radius_p != None) and (radius_n != None):
-                diameters.append(radius_p+radius_n)
-            # plt.plot(p3[0], p3[1], 'r.', markersize=12)
-            lines.append((cp1,cp2))
+            test_point = round(p3[1]),round(p3[0])
+            if not self.is_inside(im, test_point):
+                continue
+            true_point = im[test_point[0], test_point[1]] > color_threshold
+            if true_point == False:
+                continue
+            if true_point == True:
+                radius_p, cp1 = self.get_pixels_half(1, im, dx, dy, p3)
+                radius_n, cp2 = self.get_pixels_half(-1, im, dx, dy, p3)
+                if (radius_p != None) and (radius_n != None):
+                    max_val = max(radius_p, radius_n)
+                    min_val = min(radius_p, radius_n)
+                    equal = abs((max_val - min_val)/(max_val + 1e-5))
+                    if equal < 0.1:
+                        lines.append((cp1,cp2))
+                        diameters.append(radius_p+radius_n)
+                        # mask_meas_lines = self.mask_measured_lines(im, lines)
+                        # plt.plot(p3[0], p3[1], 'r.', markersize=12)
         calculated_diameter = np.array(diameters).mean()
         return calculated_diameter, lines
 
