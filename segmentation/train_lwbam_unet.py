@@ -85,12 +85,12 @@ def batcher(generator, batch_size):
         yield batch
 
 def train_batch_gen():
-    train_tasks = [f"train{i:04d}" for i in range(16)]
+    train_tasks = [f"train{i:04d}" for i in range(2048)]
     for x, y in batcher(example_generator(dataset_path, train_tasks), batch_size):
         yield x, y
 
 def val_batch_gen():
-    val_tasks = [f"val{i:04d}" for i in range(16)]
+    val_tasks = [f"val{i:04d}" for i in range(256)]
     for x, y in batcher(example_generator(dataset_path, val_tasks), batch_size):
         yield x, y
 
@@ -100,7 +100,7 @@ def log_val_table(val_batch_path:str, model:keras.Model):
     print(pred.shape)
     rows = []
     for i, (x, y, ŷ) in enumerate(zip(test_batch['x'], test_batch['y'], pred)):
-        im = wandb.Image(x[:,:,0], caption=f"test_batch_0_{i}",
+        im = wandb.Image(x[:,:,0], caption=f"val_batch_0_{i}",
             masks={
                 "ground_truth":{
                     'mask_data':y[:,:,0].astype(int),
@@ -166,11 +166,12 @@ if __name__ == '__main__':
         train_dataset, 
         validation_data=val_dataset, 
         epochs=c.epochs, 
-        callbacks=[wandb.keras.WandbCallback(save_model=False)], 
+        callbacks=[wandb.keras.WandbCallback(
+            save_model=True, save_weights_only=True, monitor='val_binary_io_u')],
         verbose=2
     )
 
-    val_batch_path = '/home/fer/projects/diameterY/segmentation/test_batch_0.npz'
+    val_batch_path = '/home/fer/projects/diameterY/segmentation/val_batch_0.npz'
     log_val_table(val_batch_path, unet)
 
     task_id = 'train0001'
