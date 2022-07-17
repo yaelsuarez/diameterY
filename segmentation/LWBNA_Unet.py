@@ -83,7 +83,8 @@ class Midblock(Layer):
         # --- store configuration for serialization
         self.filters = filters
         self.steps = steps
-        self.reducing_factor = reducing_factor
+        self.reducing_factor = reducing_factor,
+        self.kwargs = kwargs
 
         # --- create all necessary layers
         self.attn_blocks = []
@@ -131,8 +132,12 @@ class LWBNAUnet(Model):
         """
         super(LWBNAUnet, self).__init__(**kwargs)
         # --- input shape is (height, width, channels)
-        self.dropout_rate = dropout_rate
+        self.n_classes = n_classes
+        self.filters = filters
         self.depth = depth
+        self.midblock_steps = midblock_steps
+        self.dropout_rate = dropout_rate
+        self.kwargs = kwargs
 
         self.conv_blocks = {}
         self.attn_blocks = {}
@@ -205,9 +210,11 @@ class LWBNAUnet(Model):
 
     def get_config(self):
         return dict(
-            filters = self.filters,
-            steps = self.steps,
-            reducing_factor = self.reducing_factor,
+            n_classes = self.n_classes,
+            filters = self.filters, 
+            depth = self.depth,
+            midblock_steps = self.midblock_steps,
+            dropout_rate = self.dropout_rate,
             **self.kwargs
         )
 

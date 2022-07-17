@@ -1,6 +1,6 @@
 r"""
-python train_lwbam_unet.py --seed=0 --epochs=1 --batch-size=8 \
-    --learning-rate=0.0001 --loss='mean_squared_error' --dropout_rate=0.3 \
+python train_lwbam_unet.py --seed=0 --epochs=1 --batch_size=8 \
+    --learning_rate=0.0001 --loss='mean_squared_error' --dropout_rate=0.3 \
     --filters=64 --depth=4 --midblock_steps=4
 """
 import tensorflow as tf
@@ -166,7 +166,7 @@ if __name__ == '__main__':
         train_dataset, 
         validation_data=val_dataset, 
         epochs=c.epochs, 
-        callbacks=[wandb.keras.WandbCallback()], 
+        callbacks=[wandb.keras.WandbCallback(save_model=False)], 
         verbose=2
     )
 
