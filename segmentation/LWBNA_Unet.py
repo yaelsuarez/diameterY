@@ -1,10 +1,24 @@
 import tensorflow as tf
-from keras.layers import Layer, InputLayer, Conv2D, MaxPool2D, UpSampling2D, Dropout, GlobalAveragePooling2D, Dense, BatchNormalization
+from keras.layers import (
+    Layer,
+    InputLayer,
+    Conv2D,
+    MaxPooling2D,
+    UpSampling2D,
+    Dropout,
+    GlobalAveragePooling2D,
+    Dense,
+    BatchNormalization,
+    Multiply
+)
 from keras.activations import relu, sigmoid, get as get_activation
 from keras import Model
 
+
 class ConvBlock(Layer):
-    def __init__(self, filters, kernel_size=(3,3), padding='same', activation='relu', **kwargs):
+    def __init__(
+        self, filters, kernel_size=(3, 3), padding="same", activation="relu", **kwargs
+    ):
         """Implements the Conv-Block described in Fig 1.
 
         Args:
@@ -16,133 +30,198 @@ class ConvBlock(Layer):
         """
         super(ConvBlock, self).__init__(**kwargs)
         # --- store configuration for serialization
-        self.filters=filters, 
-        self.kernel_size=kernel_size,
-        self.padding=padding,
-        self.activation=activation,
+        self.filters = (filters,)
+        self.kernel_size = (kernel_size,)
+        self.padding = (padding,)
+        self.activation = (activation,)
         self.kwargs = kwargs
         # --- create needed layers
         self.conv = Conv2D(filters=filters, kernel_size=kernel_size, padding=padding)
         self.batch_norm = BatchNormalization()
         self.activation_fn = get_activation(activation)
 
-    def __call__(self, inputs):
+    def call(self, inputs, training=None):
         x = self.conv(inputs)
-        x = self.batch_norm(x)
-        return self.activation(x)
+        x = self.batch_norm(x, training=training)
+        return self.activation_fn(x)
 
     def get_config(self):
         return dict(
-            filters=self.filters, 
+            filters=self.filters,
             kernel_size=self.kernel_size,
             padding=self.padding,
             activation=self.activation,
-            **self.kwargs
+            **self.kwargs,
         )
+
 
 class AttentionBlock(Layer):
     def __init__(self, units, **kwargs):
-        super(self, AttentionBlock).__init__(**kwargs)
-        self.global_avg_pooling = GlobalAveragePooling2D()
+        super(AttentionBlock, self).__init__(**kwargs)
+        self.units = units
+        self.kwargs = kwargs
+        self.global_avg_pooling = GlobalAveragePooling2D(keepdims=True)
         self.dense = Dense(units=units)
 
-    def __call__(self, inputs):
+    def call(self, inputs):
         x = self.global_avg_pooling(inputs)
         x = self.dense(x)
         x = relu(x)
         x = sigmoid(x)
-        return tf.multiply(inputs, x)
+        return Multiply()([x, inputs])
+
+    def get_config(self):
+        return dict(
+            units = self.units,
+            **self.kwargs
+        )
+
 
 class Midblock(Layer):
-    def __init__(self, filters, attention_blocks, contraction_factor=2, **kwargs):
-        super(self, AttentionBlock).__init__(**kwargs)
+    def __init__(self, filters, steps, reducing_factor=2, **kwargs):
+        super(Midblock, self).__init__(**kwargs)
         # --- store configuration for serialization
         self.filters = filters
-        self.attention_blocks = attention_blocks
-        self.contraction_factor = contraction_factor
+        self.steps = steps
+        self.reducing_factor = reducing_factor
 
         # --- create all necessary layers
-        self.conv_block_in = ConvBlock(filters=filters)
         self.attn_blocks = []
-        for i in range(attention_blocks):
-            units = int(filters/(contraction_factor ** i)) # divided by 1, 2, 4, ...
-            self.attn_blocks.append(AttentionBlock(units))
-        self.conv_block_out = ConvBlock(filters=filters)
+        self.conv_blocks = []
+        get_channels = lambda step: int(filters / (reducing_factor**step))  # divided by 2**0, 2**1, 2**2 etc
+        for step in range(self.steps):
+            attn_units = get_channels(step)
+            self.conv_blocks.append(ConvBlock(attn_units, name=f'conv_{step}'))
+            self.attn_blocks.append(AttentionBlock(attn_units, name=f'attn_{step}'))
+        self.conv_final = ConvBlock(filters=filters, name='conv_final')
+    
+    def get_config(self):
+        return dict(
+            filters = self.filters,
+            steps = self.steps,
+            reducing_factor = self.reducing_factor,
+            **self.kwargs
+        )
 
-    def __call__(self, inputs):
-        x_in = self.conv_block_in(inputs)
-        x = x_in
-        for attn_block in self.attention_blocks:
-            x = attn_block(x)
-        x = self.conv_block_out(x)
-        return tf.multiply(inputs, x_in)
+    def call(self, inputs):
+        x = inputs
+        for step in range(self.steps):
+            x = self.conv_blocks[step](x)
+            if step == 0: #store for the skip connection
+                skip = x
+            x = self.attn_blocks[step](x)
+        x = self.conv_final(x)
+        return tf.add(inputs, skip)
+
 
 class LWBNAUnet(Model):
-    def __init__(self, n_classes, filters, depth, midblock_attn_blocks, dropout=0.3, **kwargs):
-        super(self, LWBNAUnet).__init__(**kwargs)
+    def __init__(
+        self, n_classes, filters, depth, midblock_steps, dropout_rate=0.3, **kwargs
+    ):
+        """Implements the Lightweight Bottle Neck Attention Unet architecture 
+        described in `A lightweight deep learning model for automatic segmentation 
+        and analysis of ophthalmic images` (https://doi.org/10.1038/s41598-022-12486-w)
+
+        Args:
+            n_classes (int): number of output channels.
+            filters (int): number of filters of the conv-blocks.
+            depth (int): number of contraction/expansion levels.
+            midblock_steps (int): number of attn-blocks in the bottle-neck.
+            dropout_rate (float, optional): training dropout rate. Defaults to 0.3.
+        """
+        super(LWBNAUnet, self).__init__(**kwargs)
         # --- input shape is (height, width, channels)
-        self.dropout = dropout
+        self.dropout_rate = dropout_rate
         self.depth = depth
 
         self.conv_blocks = {}
         self.attn_blocks = {}
-        for d in depth:
-            self.conv_blocks[f'contract_{d}0'] = ConvBlock(filters=filters, name=f'contract_{d}0')
-            self.conv_blocks[f'contract_{d}1'] = ConvBlock(filters=filters)
-            self.attn_blocks[f'contract_{d}'] = AttentionBlock(filters) # Is this correct ??
-            self.conv_blocks[f'expand_{d}0'] = ConvBlock(filters=filters)
-            self.conv_blocks[f'expand_{d}1'] = ConvBlock(filters=filters)
-            self.attn_blocks[f'expand_{d}'] = AttentionBlock(filters) # Is this correct ??
-        self.conv_blocks['post_midblock_0'] = ConvBlock(filters=filters)
-        self.conv_blocks['post_midblock_1'] = ConvBlock(filters=filters)
-        self.attn_blocks['post_midblock'] = AttentionBlock(filters) # Is this correct ??
-        self.midblock = Midblock(filters=filters, attention_blocks=midblock_attn_blocks)
-        self.output_conv = Conv2D(filters=n_classes, kernel_size=1, activation='sigmoid')
+        for d in range(depth):
+            self.conv_blocks[f"contract_{d}0"] = ConvBlock(
+                filters=filters, name=f"conv_contract_{d}0")
+            self.conv_blocks[f"contract_{d}1"] = ConvBlock(
+                filters=filters, name=f"conv_contract_{d}1")
+            self.attn_blocks[f"contract_{d}"] = AttentionBlock(
+                filters, name=f"attn_contract_{d}")
+            self.conv_blocks[f"expand_{d}0"] = ConvBlock(
+                filters=filters, name=f"conv_expand_{d}0")
+            self.conv_blocks[f"expand_{d}1"] = ConvBlock(
+                filters=filters, name=f"conv_expand_{d}1")
+            self.attn_blocks[f"expand_{d}"] = AttentionBlock(
+                filters, name=f"attn_expand_{d}")
 
-    def __call__(self, inputs):
+        self.conv_blocks["post_midblock_0"] = ConvBlock(
+            filters=filters, name="conv_post_midblock_0")
+        self.conv_blocks["post_midblock_1"] = ConvBlock(
+            filters=filters, name="conv_post_midblock_1")
+        self.attn_blocks["post_midblock"] = AttentionBlock(
+            filters, name="attn_post_midblock")
+        self.midblock = Midblock(filters=filters, steps=midblock_steps)
+        self.output_conv = Conv2D(
+            filters=n_classes, kernel_size=1, activation="sigmoid"
+        )
+
+    def call(self, inputs, training=None):
         def dropout_conv_conv_attn(x, dir, depth):
-            x = Dropout(self.dropout)(x)
-            x = self.conv_blocks[f'{dir}_{depth}0'](x)
-            x = self.conv_blocks[f'{dir}_{depth}1'](x)
-            return self.attn_blocks[f'{dir}_{depth}'](x)
+            x = Dropout(self.dropout_rate)(x, training=training)
+            x = self.conv_blocks[f"{dir}_{depth}0"](x)
+            x = self.conv_blocks[f"{dir}_{depth}1"](x)
+            return self.attn_blocks[f"{dir}_{depth}"](x)
 
         # store skip connections
-        skip = []
+        skip = {}
 
         # first contraction
-        x = self.conv_blocks['contract_00'](x)
-        x = self.conv_blocks['contract_00'](x) 
-        skip[0] = self.attn_blocks['contract_0'](x)
+        x = self.conv_blocks["contract_00"](inputs)
+        x = self.conv_blocks["contract_01"](x)
+        skip[0] = self.attn_blocks["contract_0"](x)
         # the first contraction comes directly from the second Conv-Block
-        x = MaxPool2D(name="max_pool_contract_0")(x)
+        x = MaxPooling2D(name="max_pool_contract_0")(x)
 
         # intermediate contractions
         for d in range(1, self.depth):
-            x = dropout_conv_conv_attn(x, 'contract', d)
+            x = dropout_conv_conv_attn(x, "contract", d)
             skip[d] = x  # store for later
-            x = MaxPool2D(name="max_pool_contract_0")(x)
-        
+            x = MaxPooling2D(name="max_pool_contract_0")(x)
+
         # bottle-neck
-        x = Dropout(self.dropout)(x)
+        x = Dropout(self.dropout_rate)(x, training=training)
         x = self.midblock(x)
-        x = self.conv_blocks['post_midblock0'](x)
-        x = self.conv_blocks['post_midblock1'](x)
-        x = self.attn_blocks['post_midblock'](x)
+        x = self.conv_blocks["post_midblock_0"](x)
+        x = self.conv_blocks["post_midblock_1"](x)
+        x = self.attn_blocks["post_midblock"](x)
         x = UpSampling2D()(x)
 
         # intermediate expansions
         for d in reversed(range(1, self.depth)):
-            x = tf.add(x, skip[d]) # add skip connection
-            x = dropout_conv_conv_attn(x, 'expand', d)
+            x = tf.add(x, skip[d])  # add skip connection
+            x = dropout_conv_conv_attn(x, "expand", d)
             x = UpSampling2D()(x)
-        
+
         # final expansion
-        x = tf.add(x, skip[0]) # add skip connection
-        x = dropout_conv_conv_attn(x, 'expand', 0)
+        x = tf.add(x, skip[0])  # add skip connection
+        x = dropout_conv_conv_attn(x, "expand", 0)
         return self.output_conv(x)
-        
 
+    def get_config(self):
+        return dict(
+            filters = self.filters,
+            steps = self.steps,
+            reducing_factor = self.reducing_factor,
+            **self.kwargs
+        )
 
-            
-
-
+if __name__ == "__main__":
+    import numpy as np
+    tf.keras.backend.clear_session()
+    unet = LWBNAUnet(
+        n_classes=1, 
+        filters=64, 
+        depth=4, 
+        midblock_steps=5, 
+        dropout_rate=0.3, 
+        name="my_unet"
+    )
+    unet.build(input_shape=(8,320,320,3))
+    unet.predict(np.random.rand(8,256,256,3))
+    unet.summary()
